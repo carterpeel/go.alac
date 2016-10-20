@@ -3,6 +3,7 @@ package alac
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -85,4 +86,18 @@ Return the SampleRate in samples per second.
 */
 func (a *Alac) SampleRate() int {
 	return int(a.setinfo_8a_rate)
+}
+
+// Convert an array of strings (FMTP) to ints.
+func strings2ints(sv []string) (iv []int64, err error) {
+
+	iv = make([]int64, len(sv))
+	for ii, s := range sv {
+		iv[ii], err = strconv.ParseInt(s, 10, 32)
+		if err != nil {
+			return
+		}
+	}
+	return
+
 }
