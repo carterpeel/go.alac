@@ -6,4 +6,6 @@ ALAC (Apple Lossless) decoder in pure Go
 
 ## Todo
 
-* fmtp stuff is hardcoded
+* fmtp stuff can now be loaded into ALAC decoder
+* Decoder exports some information such as frequency, channels, bit-depth
+
