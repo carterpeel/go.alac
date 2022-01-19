@@ -772,11 +772,13 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 					audiobits = sign_extended32(audiobits, int(alac.setinfo_sample_size))
 
 					alac.outputsamples_buffer_a[i] = audiobits
+					fmt.Printf("%d-", audiobits)
 				}
+				fmt.Printf("\n")
 			} else {
 				for i := uint32(0); i < outputsamples; i++ {
 					audiobits := int32(alac.readbits(16))
-					// special case of sign extension..
+					// special case of sign extension...
 					// as we'll be ORing the low 16bits into this
 					audiobits = audiobits << (alac.setinfo_sample_size - 16)
 					audiobits |= int32(alac.readbits(int(alac.setinfo_sample_size - 16)))
@@ -793,11 +795,10 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 		case 16:
 			for i := uint32(0); i < outputsamples; i++ {
 				sample := int16(alac.outputsamples_buffer_a[i])
-				// TODO ---------
-				fmt.Printf("Old: %d\n", sample)
-				sample = swap16(sample)
-				fmt.Printf(" New (16bit swapped): %d\n", sample)
-				// TODO ---------
+				// TODO
+				// if host_bigendian {
+				// _Swap16(sample);
+				// }
 
 				// ((int16_t*)outbuffer)[i * alac->numchannels] = sample;
 				outbuffer[2*int(i)*alac.numchannels] = byte(sample)
@@ -1025,8 +1026,4 @@ func newAlac(samplesize, numchannels int) *Alac {
 		numchannels:    numchannels,
 		bytespersample: (samplesize / 8) * numchannels,
 	}
-}
-
-func swap16(d int16) int16 {
-	return (d << 8) | (d >> 8)
 }
