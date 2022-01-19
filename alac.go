@@ -9,7 +9,7 @@ import (
 
 // New alac decoder. Sample size 16, 2 chan!
 func New() (*Alac, error) {
-	a := create_alac(16, 2)
+	a := newAlac(16, 2)
 	if a == nil {
 		return nil, fmt.Errorf("can't create alac. No idea why, though")
 	}
@@ -33,7 +33,7 @@ func New() (*Alac, error) {
 
 // New alac decoder. Sample size 16, 2 chan!
 func NewFromFmtp(fmtp string) (*Alac, error) {
-	a := create_alac(16, 2)
+	a := newAlac(16, 2)
 	if a == nil {
 		return nil, fmt.Errorf("can't create alac. No idea why, though")
 	}

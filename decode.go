@@ -793,10 +793,11 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 		case 16:
 			for i := uint32(0); i < outputsamples; i++ {
 				sample := int16(alac.outputsamples_buffer_a[i])
-				// TODO
-				// if host_bigendian {
-				// _Swap16(sample);
-				// }
+				// TODO ---------
+				if host_bigendian {
+					swap16(sample)
+				}
+				// TODO ---------
 
 				// ((int16_t*)outbuffer)[i * alac->numchannels] = sample;
 				outbuffer[2*int(i)*alac.numchannels] = byte(sample)
@@ -1018,10 +1019,14 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 	return nil
 }
 
-func create_alac(samplesize, numchannels int) *Alac {
+func newAlac(samplesize, numchannels int) *Alac {
 	return &Alac{
 		samplesize:     samplesize,
 		numchannels:    numchannels,
 		bytespersample: (samplesize / 8) * numchannels,
 	}
+}
+
+func swap16(d int16) int16 {
+	return (d << 8) | (d >> 8)
 }
