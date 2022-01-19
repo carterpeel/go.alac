@@ -794,11 +794,9 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 			for i := uint32(0); i < outputsamples; i++ {
 				sample := int16(alac.outputsamples_buffer_a[i])
 				// TODO ---------
-				if host_bigendian {
-					fmt.Printf("Old: %d\n", sample)
-					sample = swap16(sample)
-					fmt.Printf(" New (16bit swapped): %d\n", sample)
-				}
+				fmt.Printf("Old: %d\n", sample)
+				sample = swap16(sample)
+				fmt.Printf(" New (16bit swapped): %d\n", sample)
 				// TODO ---------
 
 				// ((int16_t*)outbuffer)[i * alac->numchannels] = sample;
