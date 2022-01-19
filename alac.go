@@ -31,7 +31,7 @@ func New() (*Alac, error) {
 	return a, nil
 }
 
-// New alac decoder. Sample size 16, 2 chan!
+// NewFromFmtp alac decoder. Sample size 16, 2 chan!
 func NewFromFmtp(fmtp string) (*Alac, error) {
 	a := newAlac(16, 2)
 	if a == nil {

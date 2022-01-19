@@ -35,6 +35,7 @@ package alac
 
 import (
 	"fmt"
+	"math/bits"
 )
 
 type Alac struct {
@@ -72,8 +73,6 @@ type Alac struct {
 
 }
 
-const host_bigendian = false
-
 /*
 #define _Swap32(v) do { \
                    v = (((v) & 0x000000FF) << 0x18) | \
@@ -97,14 +96,14 @@ func signExtend24(v int32) int32 {
 }
 
 func (alac *Alac) allocateBuffers() {
-	alac.predicterror_buffer_a = make([]int32, alac.setinfo_max_samples_per_frame*4)
-	alac.predicterror_buffer_b = make([]int32, alac.setinfo_max_samples_per_frame*4)
+	alac.predicterror_buffer_a = make([]int32, alac.setinfo_max_samples_per_frame<<2)
+	alac.predicterror_buffer_b = make([]int32, alac.setinfo_max_samples_per_frame<<2)
 
-	alac.outputsamples_buffer_a = make([]int32, alac.setinfo_max_samples_per_frame*4)
-	alac.outputsamples_buffer_b = make([]int32, alac.setinfo_max_samples_per_frame*4)
+	alac.outputsamples_buffer_a = make([]int32, alac.setinfo_max_samples_per_frame<<2)
+	alac.outputsamples_buffer_b = make([]int32, alac.setinfo_max_samples_per_frame<<2)
 
-	alac.uncompressed_bytes_buffer_a = make([]int32, alac.setinfo_max_samples_per_frame*4)
-	alac.uncompressed_bytes_buffer_b = make([]int32, alac.setinfo_max_samples_per_frame*4)
+	alac.uncompressed_bytes_buffer_a = make([]int32, alac.setinfo_max_samples_per_frame<<2)
+	alac.uncompressed_bytes_buffer_b = make([]int32, alac.setinfo_max_samples_per_frame<<2)
 }
 
 /*
@@ -159,12 +158,11 @@ void alac_set_info(alac_file *alac, char *inputbuffer)
 
 // supports reading 1 to 16 bits, in big endian format
 func (alac *Alac) readbits_16(bits int) uint32 {
-	var result uint32
+	result := uint32(alac.input_buffer[alac.input_buffer_index]) << 16
 
-	result = (uint32(alac.input_buffer[alac.input_buffer_index]) << 16)
 	// bug in the original
 	if len(alac.input_buffer)-alac.input_buffer_index > 1 {
-		result |= (uint32(alac.input_buffer[alac.input_buffer_index+1]) << 8)
+		result |= uint32(alac.input_buffer[alac.input_buffer_index+1]) << 8
 	}
 	// bug in the original
 	if len(alac.input_buffer)-alac.input_buffer_index > 2 {
@@ -174,28 +172,22 @@ func (alac *Alac) readbits_16(bits int) uint32 {
 	/* shift left by the number of bits we've already read,
 	 * so that the top 'n' bits of the 24 bits we read will
 	 * be the return bits */
-	result = result << uint(alac.input_buffer_bitaccumulator)
+	result = ((result << uint(alac.input_buffer_bitaccumulator)) & 0x00ffffff) >> uint(24-bits)
 
-	result = result & 0x00ffffff
-
-	/* and then only want the top 'n' bits from that, where
-	 * n is 'bits' */
-	result = result >> uint(24-bits)
-
-	new_accumulator := (alac.input_buffer_bitaccumulator + bits)
+	new_accumulator := alac.input_buffer_bitaccumulator + bits
 
 	/* increase the buffer pointer if we've read over n bytes. */
 	alac.input_buffer_index += new_accumulator >> 3
 
 	/* and the remainder goes back into the bit accumulator */
-	alac.input_buffer_bitaccumulator = (new_accumulator & 7)
+	alac.input_buffer_bitaccumulator = new_accumulator & 7
 
 	return result
 }
 
 // supports reading 1 to 32 bits, in big endian format
 func (alac *Alac) readbits(bits int) uint32 {
-	var result int32 = 0
+	result := int32(0)
 
 	if bits > 16 {
 		bits -= 16
@@ -209,33 +201,30 @@ func (alac *Alac) readbits(bits int) uint32 {
 
 /* reads a single bit */
 func (alac *Alac) readbit() int {
-	result := int(alac.input_buffer[alac.input_buffer_index])
-	result = result << uint(alac.input_buffer_bitaccumulator)
-	result = result >> 7 & 1
+	result := (int(alac.input_buffer[alac.input_buffer_index]) << uint(alac.input_buffer_bitaccumulator)) >> 7 & 1
 
-	new_accumulator := int(alac.input_buffer_bitaccumulator + 1)
-	alac.input_buffer_index += new_accumulator / 8
-	alac.input_buffer_bitaccumulator = (new_accumulator % 8)
+	new_accumulator := alac.input_buffer_bitaccumulator + 1
+	alac.input_buffer_index += new_accumulator >> 3
+	alac.input_buffer_bitaccumulator = new_accumulator % 8
 
 	return result
 }
 
 func (alac *Alac) unreadbits(bits int) {
-	new_accumulator := int(alac.input_buffer_bitaccumulator - bits)
+	new_accumulator := alac.input_buffer_bitaccumulator - bits
 
 	alac.input_buffer_index += new_accumulator >> 3
 
-	alac.input_buffer_bitaccumulator = (new_accumulator & 7)
+	alac.input_buffer_bitaccumulator = new_accumulator & 7
 	if alac.input_buffer_bitaccumulator < 0 {
-		alac.input_buffer_bitaccumulator *= -1
+		alac.input_buffer_bitaccumulator = -alac.input_buffer_bitaccumulator
 	}
 }
 
 func count_leading_zeros(input int) int {
 	output := 0
-	curbyte := 0
+	curbyte := input >> 24
 
-	curbyte = input >> 24
 	if curbyte > 0 {
 		goto found
 	}
@@ -301,18 +290,13 @@ func (alac *Alac) entropyDecodeValue(
 
 	if x > rice_threshold {
 		// read the number from the bit stream (raw value)
-		value := int32(alac.readbits(readSampleSize))
-
-		// mask value
-		value &= int32((uint32(0xffffffff) >> uint(32-readSampleSize)))
-
-		x = value
+		x = int32(alac.readbits(readSampleSize)) & int32(uint32(0xffffffff)>>uint(32-readSampleSize))
 	} else {
 		if k != 1 {
 			extraBits := int(alac.readbits(k))
 
 			// x = x * (2^k - 1)
-			x *= int32((((1 << uint(k)) - 1) & rice_kmodifier_mask))
+			x *= int32(((1 << uint(k)) - 1) & rice_kmodifier_mask)
 
 			if extraBits > 1 {
 				x += int32(extraBits - 1)
@@ -335,8 +319,8 @@ func (alac *Alac) entropyRiceDecode(
 	rice_kmodifier_mask uint32,
 ) {
 	var (
-		history      int = rice_initialhistory
-		signModifier int = 0
+		history      = rice_initialhistory
+		signModifier = 0
 	)
 
 	for outputCount := 0; outputCount < outputSize; outputCount++ {
@@ -346,8 +330,7 @@ func (alac *Alac) entropyRiceDecode(
 			k            int32
 		)
 
-		k = int32(31 - rice_kmodifier - count_leading_zeros((history>>9)+3))
-
+		k = int32(31 - rice_kmodifier - bits.LeadingZeros32(uint32(history>>9)+3))
 		if k < 0 {
 			k += int32(rice_kmodifier)
 		} else {
@@ -355,12 +338,12 @@ func (alac *Alac) entropyRiceDecode(
 		}
 
 		// note: don't use rice_kmodifier_mask here (set mask to 0xFFFFFFFF)
-		decodedValue = int32(alac.entropyDecodeValue(readSampleSize, int(k), 0xFFFFFFFF))
+		decodedValue = alac.entropyDecodeValue(readSampleSize, int(k), 0xFFFFFFFF)
 
 		decodedValue += int32(signModifier)
-		finalValue = (decodedValue + 1) / 2 // inc by 1 and shift out sign bit
-		if decodedValue&1 != 0 {            // the sign is stored in the low bit
-			finalValue *= -1
+		finalValue = (decodedValue + 1) >> 1 // inc by 1 and shift out sign bit
+		if decodedValue&1 != 0 {             // the sign is stored in the low bit
+			finalValue = -finalValue
 		}
 
 		outputBuffer[outputCount] = finalValue
@@ -377,21 +360,17 @@ func (alac *Alac) entropyRiceDecode(
 
 		// special case, for compressed blocks of 0
 		if (history < 128) && (outputCount+1 < outputSize) {
-			var blockSize int32
-
 			signModifier = 1
-
-			k = int32(count_leading_zeros(history)) + ((int32(history) + 16) / 64) - 24
+			k = int32(bits.LeadingZeros32(uint32(history))) + ((int32(history) + 16) >> 6) - 24
 
 			// note: blockSize is always 16bit
-			blockSize = int32(alac.entropyDecodeValue(16, int(k), rice_kmodifier_mask))
+			blockSize := alac.entropyDecodeValue(16, int(k), rice_kmodifier_mask)
 
 			// got blockSize 0s
 			if blockSize > 0 {
 				// memset(&outputBuffer[outputCount+1], 0, blockSize*sizeof(*outputBuffer))
-				for i := outputCount + 1; i < outputCount+1+int(blockSize*4); i++ {
-					outputBuffer[i] = 0
-				}
+				/*target := outputCount+1+int(blockSize<<2)*/
+				copy(outputBuffer[outputCount+1:], make([]int32, blockSize<<2))
 				outputCount += int(blockSize)
 			}
 
@@ -405,17 +384,18 @@ func (alac *Alac) entropyRiceDecode(
 }
 
 func sign_extended32(val int32, bits int) int32 {
-	return ((val << uint(32-bits)) >> uint(32-bits))
+	return (val << uint(32-bits)) >> uint(32-bits)
 }
 
 func sign_only(v int) int {
-	if v < 0 {
+	switch {
+	case v < 0:
 		return -1
-	}
-	if v > 0 {
+	case v > 0:
 		return 1
+	default:
+		return 0
 	}
-	return 0
 }
 
 func predictorDecompressFirAdapt(
@@ -448,10 +428,8 @@ func predictorDecompressFirAdapt(
 			return
 		}
 		for i := 0; i < output_size-1; i++ {
-			prev_value := buffer_out[i]
-			error_value := error_buffer[i+1]
-			buffer_out[i+1] = int32(sign_extended32((prev_value + error_value),
-				readsamplesize))
+			buffer_out[i+1] = sign_extended32(buffer_out[i]+error_buffer[i+1],
+				readsamplesize)
 		}
 		return
 	}
@@ -459,11 +437,7 @@ func predictorDecompressFirAdapt(
 	/* read warm-up samples */
 	if predictor_coef_num > 0 {
 		for i := 0; i < predictor_coef_num; i++ {
-			val := buffer_out[i] + error_buffer[i+1]
-
-			val = sign_extended32(val, readsamplesize)
-
-			buffer_out[i+1] = val
+			buffer_out[i+1] = sign_extended32(buffer_out[i]+error_buffer[i+1], readsamplesize)
 		}
 	}
 
@@ -471,8 +445,7 @@ func predictorDecompressFirAdapt(
 	if predictor_coef_num > 0 {
 		for i := predictor_coef_num + 1; i < output_size; i++ {
 			var (
-				sum       int = 0
-				outval    int
+				sum       = 0
 				error_val = error_buffer[i]
 			)
 
@@ -481,20 +454,14 @@ func predictorDecompressFirAdapt(
 					int32(predictor_coef_table[j]))
 			}
 
-			outval = (1 << uint(predictor_quantitization-1)) + sum
-			outval = outval >> uint(predictor_quantitization)
-			outval = outval + int(buffer_out[0]) + int(error_val)
-			outval = int(sign_extended32(int32(outval), readsamplesize))
-
-			buffer_out[predictor_coef_num+1] = int32(outval)
+			buffer_out[predictor_coef_num+1] = sign_extended32(int32((((1<<uint(predictor_quantitization-1))+sum)>>uint(predictor_quantitization))+(int(buffer_out[0])+int(error_val))), readsamplesize)
 
 			if error_val > 0 {
-				var predictor_num int = predictor_coef_num - 1
+				predictor_num := predictor_coef_num - 1
 
 				for predictor_num >= 0 && error_val > 0 {
-					var val int = int(buffer_out[0] -
-						buffer_out[predictor_coef_num-predictor_num])
-					var sign int = sign_only(val)
+					val := int(buffer_out[0] - buffer_out[predictor_coef_num-predictor_num])
+					sign := sign_only(val)
 
 					predictor_coef_table[predictor_num] -= int16(sign)
 
@@ -511,7 +478,7 @@ func predictorDecompressFirAdapt(
 				for predictor_num >= 0 && error_val < 0 {
 					val := int(buffer_out[0] -
 						buffer_out[predictor_coef_num-predictor_num])
-					sign := -sign_only(int(val))
+					sign := -sign_only(val)
 
 					predictor_coef_table[predictor_num] -= int16(sign)
 
@@ -542,59 +509,27 @@ func deinterlace_16(
 
 	/* weighted interlacing */
 	if interlacing_leftweight != 0 {
-		for i := 0; i < numsamples; i++ {
-			var (
-				difference, midright int32
-				left                 int16
-				right                int16
-			)
+		for i2 := 0; i2 < numsamples; i2++ {
+			right := int16(buffer_a[i2] - ((buffer_b[i2] * int32(interlacing_leftweight)) >> interlacing_shift))
+			left := right + int16(buffer_b[i2])
 
-			midright = buffer_a[i]
-			difference = buffer_b[i]
-
-			right = int16(midright - ((difference * int32(interlacing_leftweight)) >> interlacing_shift))
-			left = right + int16(difference)
-
-			/* output is always little endian */
-			/* TODO
-			if host_bigendian {
-				_Swap16(left)
-				_Swap16(right)
-			}
-			*/
-
-			// buffer_out[i*numchannels] = left
-			// buffer_out[i*numchannels+1] = right
-			buffer_out[2*i*numchannels] = byte(left)
-			buffer_out[2*i*numchannels+1] = byte(left >> 8)
-			buffer_out[2*i*numchannels+2] = byte(right)
-			buffer_out[2*i*numchannels+3] = byte(right >> 8)
+			buffer_out[(i2<<1)*numchannels] = byte(left)
+			buffer_out[(i2<<1)*numchannels+1] = byte(left >> 8)
+			buffer_out[(i2<<1)*numchannels+2] = byte(right)
+			buffer_out[(i2<<1)*numchannels+3] = byte(right >> 8)
 		}
-
 		return
 	}
 
 	/* otherwise basic interlacing took place */
-	for i := 0; i < numsamples; i++ {
-		var left, right int16
+	for i2 := 0; i2 < numsamples; i2++ {
+		left := int16(buffer_a[i2])
+		right := int16(buffer_b[i2])
 
-		left = int16(buffer_a[i])
-		right = int16(buffer_b[i])
-
-		/* output is always little endian */
-		/* TODO
-		if host_bigendian {
-			_Swap16(left)
-			_Swap16(right)
-		}
-		*/
-
-		// buffer_out[i*numchannels] = left
-		// buffer_out[i*numchannels+1] = right
-		buffer_out[2*i*numchannels] = byte(left)
-		buffer_out[2*i*numchannels+1] = byte(left >> 8)
-		buffer_out[2*i*numchannels+2] = byte(right)
-		buffer_out[2*i*numchannels+3] = byte(right >> 8)
+		buffer_out[(i2<<1)*numchannels] = byte(left)
+		buffer_out[(i2<<1)*numchannels+1] = byte(left >> 8)
+		buffer_out[(i2<<1)*numchannels+2] = byte(right)
+		buffer_out[(i2<<1)*numchannels+3] = byte(right >> 8)
 	}
 }
 
@@ -623,9 +558,9 @@ func deinterlace_24(
 			left = right + difference
 
 			if uncompressed_bytes > 0 {
-				mask := uint32(^(0xFFFFFFFF << uint(uncompressed_bytes*8)))
-				left <<= uint(uncompressed_bytes * 8)
-				right <<= uint(uncompressed_bytes * 8)
+				mask := uint32(^(0xFFFFFFFF << uint(uncompressed_bytes<<3)))
+				left <<= uint(uncompressed_bytes << 3)
+				right <<= uint(uncompressed_bytes << 3)
 
 				left |= uncompressed_bytes_buffer_a[i] & int32(mask)
 				right |= uncompressed_bytes_buffer_b[i] & int32(mask)
@@ -649,9 +584,9 @@ func deinterlace_24(
 		right := buffer_b[i]
 
 		if uncompressed_bytes > 0 {
-			mask := uint32(^(0xFFFFFFFF << uint(uncompressed_bytes*8)))
-			left <<= uint(uncompressed_bytes * 8)
-			right <<= uint(uncompressed_bytes * 8)
+			mask := uint32(^(0xFFFFFFFF << uint(uncompressed_bytes<<3)))
+			left <<= uint(uncompressed_bytes << 3)
+			right <<= uint(uncompressed_bytes << 3)
 
 			left |= uncompressed_bytes_buffer_a[i] & int32(mask)
 			right |= uncompressed_bytes_buffer_b[i] & int32(mask)
@@ -664,9 +599,7 @@ func deinterlace_24(
 		buffer_out[i*numchannels*3+3] = byte((right) & 0xFF)
 		buffer_out[i*numchannels*3+4] = byte((right >> 8) & 0xFF)
 		buffer_out[i*numchannels*3+5] = byte((right >> 16) & 0xFF)
-
 	}
-
 }
 
 func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
@@ -801,12 +734,12 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 				// }
 
 				// ((int16_t*)outbuffer)[i * alac->numchannels] = sample;
-				outbuffer[2*int(i)*alac.numchannels] = byte(sample)
-				outbuffer[2*int(i)*alac.numchannels+1] = byte(sample >> 8)
+				outbuffer[(int(i)<<1)*alac.numchannels] = byte(sample)
+				outbuffer[(int(i)<<1)*alac.numchannels+1] = byte(sample >> 8)
 			}
 		case 24:
 			for i := uint32(0); i < outputsamples; i++ {
-				sample := int32(alac.outputsamples_buffer_a[i])
+				sample := alac.outputsamples_buffer_a[i]
 				if uncompressed_bytes != 0 {
 					sample = sample << uint(uncompressed_bytes*8)
 					mask := uint32(^(0xFFFFFFFF << uint(uncompressed_bytes*8)))
@@ -855,7 +788,7 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 			outputsize = int(outputsamples) * alac.bytespersample
 		}
 
-		readsamplesize = int(alac.setinfo_sample_size) - (uncompressed_bytes * 8) + 1
+		readsamplesize = int(alac.setinfo_sample_size) - (uncompressed_bytes << 3) + 1
 
 		if isnotcompressed == 0 {
 			/* compressed */
@@ -868,11 +801,11 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 
 			/******** channel 1 ***********/
 			var (
-				prediction_type_a           int = int(alac.readbits(4))
-				prediction_quantitization_a int = int(alac.readbits(4))
+				prediction_type_a           = int(alac.readbits(4))
+				prediction_quantitization_a = int(alac.readbits(4))
 
-				ricemodifier_a       int = int(alac.readbits(3))
-				predictor_coef_num_a int = int(alac.readbits(5))
+				ricemodifier_a       = int(alac.readbits(3))
+				predictor_coef_num_a = int(alac.readbits(5))
 			)
 
 			/* read the predictor table */
@@ -882,11 +815,11 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 
 			/******** channel 2 *********/
 			var (
-				prediction_type_b           int = int(alac.readbits(4))
-				prediction_quantitization_b int = int(alac.readbits(4))
+				prediction_type_b           = int(alac.readbits(4))
+				prediction_quantitization_b = int(alac.readbits(4))
 
-				ricemodifier_b       int = int(alac.readbits(3))
-				predictor_coef_num_b int = int(alac.readbits(5))
+				ricemodifier_b       = int(alac.readbits(3))
+				predictor_coef_num_b = int(alac.readbits(5))
 			)
 			/* read the predictor table */
 			for i := 0; i < predictor_coef_num_b; i++ {
@@ -912,19 +845,6 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 				ricemodifier_a*int(alac.setinfo_rice_historymult)/4,
 				(1<<alac.setinfo_rice_kmodifier)-1)
 
-			if prediction_type_a == 0 { /* adaptive fir */
-				predictorDecompressFirAdapt(
-					alac.predicterror_buffer_a,
-					alac.outputsamples_buffer_a,
-					int(outputsamples),
-					readsamplesize,
-					predictor_coef_table_a,
-					predictor_coef_num_a,
-					prediction_quantitization_a)
-			} else {
-				/* see mono case */
-				fmt.Printf("FIXME: unhandled predicition type: %d\n", prediction_type_a)
-			}
 			/* channel 2 */
 			alac.entropyRiceDecode(
 				alac.predicterror_buffer_b,
@@ -935,7 +855,18 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 				ricemodifier_b*int(alac.setinfo_rice_historymult)/4,
 				(1<<alac.setinfo_rice_kmodifier)-1)
 
-			if prediction_type_b == 0 { /* adaptive fir */
+			if prediction_type_a == 0 { /* adaptive fir (channel 1) */
+				predictorDecompressFirAdapt(
+					alac.predicterror_buffer_a,
+					alac.outputsamples_buffer_a,
+					int(outputsamples),
+					readsamplesize,
+					predictor_coef_table_a,
+					predictor_coef_num_a,
+					prediction_quantitization_a)
+			}
+
+			if prediction_type_b == 0 { /* adaptive fir (channel 2) */
 				predictorDecompressFirAdapt(
 					alac.predicterror_buffer_b,
 					alac.outputsamples_buffer_b,
@@ -944,37 +875,19 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 					predictor_coef_table_b,
 					predictor_coef_num_b,
 					prediction_quantitization_b)
-			} else {
-				fmt.Printf("FIXME: unhandled predicition type: %d\n", prediction_type_b)
 			}
 		} else {
 			/* not compressed, easy case */
 			// note: translation untested
 			if alac.setinfo_sample_size <= 16 {
 				for i := uint32(0); i < outputsamples; i++ {
-					audiobits_a := alac.readbits(int(alac.setinfo_sample_size))
-					audiobits_b := alac.readbits(int(alac.setinfo_sample_size))
-
-					audiobits_a = uint32(sign_extended32(int32(audiobits_a), int(alac.setinfo_sample_size)))
-					audiobits_b = uint32(sign_extended32(int32(audiobits_b), int(alac.setinfo_sample_size)))
-
-					alac.outputsamples_buffer_a[i] = int32(audiobits_a)
-					alac.outputsamples_buffer_b[i] = int32(audiobits_b)
+					alac.outputsamples_buffer_a[i] = sign_extended32(int32(alac.readbits(int(alac.setinfo_sample_size))), int(alac.setinfo_sample_size))
+					alac.outputsamples_buffer_b[i] = sign_extended32(int32(alac.readbits(int(alac.setinfo_sample_size))), int(alac.setinfo_sample_size))
 				}
 			} else {
 				for i := uint32(0); i < outputsamples; i++ {
-					audiobits_a := int32(alac.readbits(16))
-					audiobits_a = audiobits_a << (alac.setinfo_sample_size - 16)
-					audiobits_a |= int32(alac.readbits(int(alac.setinfo_sample_size - 16)))
-					audiobits_a = signExtend24(audiobits_a)
-
-					audiobits_b := int32(alac.readbits(16))
-					audiobits_b = audiobits_b << (alac.setinfo_sample_size - 16)
-					audiobits_b |= int32(alac.readbits(int(alac.setinfo_sample_size - 16)))
-					audiobits_b = signExtend24(audiobits_b)
-
-					alac.outputsamples_buffer_a[i] = audiobits_a
-					alac.outputsamples_buffer_b[i] = audiobits_b
+					alac.outputsamples_buffer_a[i] = signExtend24(int32(alac.readbits(16))<<(alac.setinfo_sample_size-16) | int32(alac.readbits(int(alac.setinfo_sample_size-16))))
+					alac.outputsamples_buffer_b[i] = signExtend24(int32(alac.readbits(16))<<(alac.setinfo_sample_size-16) | int32(alac.readbits(int(alac.setinfo_sample_size-16))))
 				}
 			}
 			uncompressed_bytes = 0 // always 0 for uncompressed
@@ -1024,6 +937,6 @@ func newAlac(samplesize, numchannels int) *Alac {
 	return &Alac{
 		samplesize:     samplesize,
 		numchannels:    numchannels,
-		bytespersample: (samplesize / 8) * numchannels,
+		bytespersample: (samplesize >> 3) * numchannels,
 	}
 }
