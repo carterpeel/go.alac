@@ -4,29 +4,36 @@ import (
 	"github.com/carterpeel/bobcaygeon/rtsp"
 	kyoo "github.com/dirkaholic/kyoo"
 	"github.com/dirkaholic/kyoo/job"
+	"sync"
 )
 
 type AudioQueue struct {
 	finishedChan chan []byte
 	callback     func(data []byte)
 	pool         *kyoo.JobQueue
-	decoders     []*Alac
+	workers      []*worker
 	maxDecoders  int
+}
+
+type worker struct {
+	mu      *sync.Mutex
+	decoder *Alac
 }
 
 func NewAudioQueue(maxDecoders int, callback func(data []byte)) (aq *AudioQueue) {
 	aq = &AudioQueue{
 		finishedChan: make(chan []byte),
 		callback:     callback,
-		decoders:     make([]*Alac, maxDecoders),
+		workers:      make([]*worker, maxDecoders),
 		maxDecoders:  maxDecoders,
 	}
 
 	aq.pool = kyoo.NewJobQueue(maxDecoders)
 	aq.pool.Start()
 
-	for i := range aq.decoders {
-		aq.decoders[i], _ = New()
+	for i := range aq.workers {
+		aq.workers[i].decoder, _ = New()
+		aq.workers[i].mu = &sync.Mutex{}
 	}
 
 	go func() {
@@ -44,8 +51,10 @@ func (aq *AudioQueue) ProcessSession(session *rtsp.Session) {
 		aq.pool.Submit(&job.FuncExecutorJob{
 			Func: func() error {
 				offset := decoderOffset
-				decoder := aq.decoders[offset]
-				aq.finishedChan <- decoder.decodeFrame(d)
+				wk := aq.workers[offset]
+				wk.mu.Lock()
+				aq.finishedChan <- wk.decoder.Decode(d)
+				wk.mu.Unlock()
 				return nil
 			},
 		})
