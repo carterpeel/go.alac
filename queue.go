@@ -49,10 +49,10 @@ func (aq *AudioQueue) ProcessSession(session *rtsp.Session) {
 				return nil
 			},
 		})
-		decoderOffset++
 		if decoderOffset >= aq.maxDecoders {
 			decoderOffset = 0
 		}
+		decoderOffset++
 	}
 }
 
