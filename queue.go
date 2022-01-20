@@ -54,17 +54,15 @@ func (aq *AudioQueue) ProcessSession(session *rtsp.Session) {
 	go func() {
 		defer aq.mu.Unlock()
 		var position int
+		lastWorker := -1
 		for d := range session.DataChan {
 			position++
-		Loop:
-			for {
-				for i := range aq.alacs {
-					if !aq.alacs[i].active {
-						aq.alacs[i].SetJob(d, position)
-						break Loop
-					}
-				}
+		Top:
+			if aq.alacs[lastWorker+1].active {
+				lastWorker++
+				goto Top
 			}
+			aq.alacs[lastWorker+1].SetJob(d, position)
 		}
 	}()
 }
