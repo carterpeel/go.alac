@@ -53,10 +53,11 @@ func (aq *AudioQueue) ProcessSession(session *rtsp.Session) {
 		if decoderOffset >= aq.maxDecoders {
 			decoderOffset = 0
 		}
+		curOffset := decoderOffset
 		aq.pool.Submit(&job.FuncExecutorJob{
 			Func: func() error {
-				offset := decoderOffset
-				wk := aq.workers[offset]
+				curOffset := curOffset
+				wk := aq.workers[curOffset]
 				wk.mu.Lock()
 				aq.finishedChan <- wk.decoder.Decode(d)
 				wk.mu.Unlock()
