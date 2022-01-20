@@ -46,11 +46,16 @@ func (aq *AudioQueue) ProcessSession(session *rtsp.Session) {
 			decoderOffset = 0
 		}
 		curOffset := decoderOffset
+		d := d
 		aq.pool.Submit(&job.FuncExecutorJob{
 			Func: func() error {
 				curOffset := curOffset
 				wk := aq.workers[curOffset]
-				aq.callback(wk.decoder.Decode(d))
+				go func(w *worker) {
+					w.mu.Lock()
+					aq.callback(w.decoder.Decode(d))
+					w.mu.Unlock()
+				}(wk)
 				return nil
 			},
 		})
