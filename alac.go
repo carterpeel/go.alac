@@ -3,7 +3,6 @@ package alac
 
 import (
 	"fmt"
-	"sync"
 )
 
 // New alac decoder. Sample size 16, 2 chan!
@@ -25,12 +24,6 @@ func New() (*Alac, error) {
 	a.setinfo_82 = 0                      // fmtp[9];
 	a.setinfo_86 = 0                      // fmtp[10];
 	a.setinfo_8a_rate = 44100             // fmtp[11];
-
-	// Audio Queue
-	a.queue = &AudioQueue{
-		mu:           sync.Mutex{},
-		finishedChan: make(chan []byte, 8192),
-	}
 
 	a.allocateBuffers()
 	return a, nil

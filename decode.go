@@ -70,8 +70,6 @@ type Alac struct {
 	setinfo_86                    uint32 /* 0x00069fe4 */ // bit rate (avarge)??
 	setinfo_8a_rate               uint32 /* 0x0000ac44 */
 	/* end setinfo stuff */
-
-	queue *AudioQueue
 }
 
 /*
