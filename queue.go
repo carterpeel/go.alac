@@ -8,11 +8,10 @@ import (
 )
 
 type AudioQueue struct {
-	finishedChan chan []byte
-	callback     func(data []byte)
-	pool         *kyoo.JobQueue
-	workers      []*worker
-	maxDecoders  int
+	callback    func(data []byte)
+	pool        *kyoo.JobQueue
+	workers     []*worker
+	maxDecoders int
 }
 
 type worker struct {
@@ -22,10 +21,9 @@ type worker struct {
 
 func NewAudioQueue(maxDecoders int, callback func(data []byte)) (aq *AudioQueue) {
 	aq = &AudioQueue{
-		finishedChan: make(chan []byte),
-		callback:     callback,
-		workers:      make([]*worker, maxDecoders),
-		maxDecoders:  maxDecoders,
+		callback:    callback,
+		workers:     make([]*worker, maxDecoders),
+		maxDecoders: maxDecoders,
 	}
 
 	aq.pool = kyoo.NewJobQueue(maxDecoders)
@@ -37,12 +35,6 @@ func NewAudioQueue(maxDecoders int, callback func(data []byte)) (aq *AudioQueue)
 		}
 		aq.workers[i].decoder, _ = New()
 	}
-
-	go func() {
-		for d := range aq.finishedChan {
-			aq.callback(d)
-		}
-	}()
 
 	return aq
 }
@@ -59,7 +51,7 @@ func (aq *AudioQueue) ProcessSession(session *rtsp.Session) {
 				curOffset := curOffset
 				wk := aq.workers[curOffset]
 				wk.mu.Lock()
-				aq.finishedChan <- wk.decoder.Decode(d)
+				aq.callback(wk.decoder.Decode(d))
 				wk.mu.Unlock()
 				return nil
 			},
