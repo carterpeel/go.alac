@@ -32,8 +32,10 @@ func NewAudioQueue(maxDecoders int, callback func(data []byte)) (aq *AudioQueue)
 	aq.pool.Start()
 
 	for i := range aq.workers {
+		aq.workers[i] = &worker{
+			mu: &sync.Mutex{},
+		}
 		aq.workers[i].decoder, _ = New()
-		aq.workers[i].mu = &sync.Mutex{}
 	}
 
 	go func() {
