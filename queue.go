@@ -12,7 +12,7 @@ type AudioQueue struct {
 	pool         *kyoo.JobQueue
 }
 
-func NewAudioQueue(maxDecoders int, callback func(data []byte)) (aq *AudioQueue, err error) {
+func NewAudioQueue(maxDecoders int, callback func(data []byte)) (aq *AudioQueue) {
 	aq = &AudioQueue{
 		finishedChan: make(chan []byte),
 		callback:     callback,
@@ -27,7 +27,7 @@ func NewAudioQueue(maxDecoders int, callback func(data []byte)) (aq *AudioQueue,
 		}
 	}()
 
-	return aq, nil
+	return aq
 }
 
 func (aq *AudioQueue) ProcessSession(session *rtsp.Session) {
