@@ -1,95 +1,83 @@
 package alac
 
 import (
+	"fmt"
 	"github.com/carterpeel/bobcaygeon/rtsp"
+	"github.com/enriquebris/goworkerpool"
 	"sync"
 )
 
 type AudioQueue struct {
-	mu           sync.Mutex
-	finishedChan chan *finishedJob
-	maxDecoders  int
-	alacs        []worker
-	callback     func(data []byte)
+	mu               sync.Mutex
+	finishedChan     chan []byte
+	maxDecoders      int
+	callback         func(data []byte)
+	pool             *goworkerpool.Pool
+	lastDecoderIndex int32
+	decoders         []*decoderWorker
 }
 
-type worker struct {
-	mu     *sync.Mutex
-	active bool
-	a      *Alac
-	ch     chan *finishedJob
+type decoderWorker struct {
+	a        *Alac
+	index    int32
+	ch       chan []byte
+	curBytes []byte
 }
 
-type finishedJob struct {
-	position int
-	data     []byte
-}
-
-func NewAudioQueue(maxDecoders int, callback func(data []byte)) *AudioQueue {
-	aq := &AudioQueue{
-		mu:           sync.Mutex{},
-		finishedChan: make(chan *finishedJob, 8192),
-		maxDecoders:  maxDecoders,
-		alacs:        make([]worker, maxDecoders),
-		callback:     callback,
+func NewAudioQueue(maxDecoders int, callback func(data []byte)) (aq *AudioQueue, err error) {
+	aq = &AudioQueue{
+		mu:               sync.Mutex{},
+		finishedChan:     make(chan []byte),
+		maxDecoders:      maxDecoders,
+		callback:         callback,
+		decoders:         make([]*decoderWorker, maxDecoders),
+		lastDecoderIndex: -1,
 	}
-	for i := range aq.alacs {
-		aq.alacs[i].a, _ = New()
-		aq.alacs[i].mu = &sync.Mutex{}
-		aq.alacs[i].ch = aq.finishedChan
+
+	for i, v := range aq.decoders {
+		v = &decoderWorker{
+			index: int32(i),
+			ch:    aq.finishedChan,
+		}
+		v.ch = aq.finishedChan
+		v.a, _ = New()
 	}
+
+	if aq.pool, err = goworkerpool.NewPoolWithOptions(goworkerpool.PoolOptions{
+		TotalInitialWorkers:          2,
+		MaxWorkers:                   uint(maxDecoders),
+		MaxOperationsInQueue:         50,
+		WaitUntilInitialWorkersAreUp: true,
+	}); err != nil {
+		return nil, fmt.Errorf("error initializing new worker pool: %w", err)
+	}
+
+	aq.pool.SetWorkerFunc(func(data interface{}) bool {
+		v := data.(*decoderWorker)
+		aq.finishedChan <- v.a.Decode(v.curBytes)
+		return true
+	})
 
 	go func() {
-		for f := range aq.finishedChan {
-			// TODO ensure returned data is ordered
-			aq.callback(f.data)
+		for d := range aq.finishedChan {
+			aq.callback(d)
 		}
 	}()
 
-	return aq
+	return aq, nil
 }
 
 func (aq *AudioQueue) ProcessSession(session *rtsp.Session) {
-	aq.mu.Lock()
-	go func() {
-		defer aq.mu.Unlock()
-		var position int
-		lastWorker := -1
-		for d := range session.DataChan {
-			position++
-		Top:
-
-			if lastWorker+1 == aq.maxDecoders {
-				lastWorker = -1
-			}
-			if aq.alacs[lastWorker+1].active {
-				lastWorker++
-				goto Top
-			}
-			aq.alacs[lastWorker+1].SetJob(d, position)
+	decoderWorkerIndex := -1
+	for d := range session.DataChan {
+		decoderWorkerIndex++
+		aq.decoders[decoderWorkerIndex].curBytes = d
+		if err := aq.pool.AddTask(aq.decoders[decoderWorkerIndex]); err != nil {
+			panic(err)
 		}
-	}()
+	}
 }
 
 func (aq *AudioQueue) SetCallback(f func(data []byte)) {
 	aq.callback = f
-}
-
-func (w *worker) IsActive() bool {
-	return w.active
-}
-
-func (w *worker) SetJob(data []byte, position int) {
-	w.mu.Lock()
-	w.active = true
-	go func(pos int, d []byte) {
-		defer func() {
-			w.active = false
-			w.mu.Unlock()
-		}()
-		w.ch <- &finishedJob{
-			position: pos,
-			data:     w.a.Decode(d),
-		}
-	}(position, data)
 }
