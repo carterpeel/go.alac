@@ -50,9 +50,7 @@ func (aq *AudioQueue) ProcessSession(session *rtsp.Session) {
 			Func: func() error {
 				curOffset := curOffset
 				wk := aq.workers[curOffset]
-				wk.mu.Lock()
 				aq.callback(wk.decoder.Decode(d))
-				wk.mu.Unlock()
 				return nil
 			},
 		})
