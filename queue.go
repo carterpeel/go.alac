@@ -50,6 +50,9 @@ func NewAudioQueue(maxDecoders int, callback func(data []byte)) (aq *AudioQueue)
 func (aq *AudioQueue) ProcessSession(session *rtsp.Session) {
 	var decoderOffset int
 	for d := range session.DataChan {
+		if decoderOffset >= aq.maxDecoders {
+			decoderOffset = 0
+		}
 		aq.pool.Submit(&job.FuncExecutorJob{
 			Func: func() error {
 				offset := decoderOffset
@@ -60,9 +63,6 @@ func (aq *AudioQueue) ProcessSession(session *rtsp.Session) {
 				return nil
 			},
 		})
-		if decoderOffset >= aq.maxDecoders {
-			decoderOffset = 0
-		}
 		decoderOffset++
 	}
 }
