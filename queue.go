@@ -58,6 +58,10 @@ func (aq *AudioQueue) ProcessSession(session *rtsp.Session) {
 		for d := range session.DataChan {
 			position++
 		Top:
+
+			if lastWorker+1 == aq.maxDecoders {
+				lastWorker = -1
+			}
 			if aq.alacs[lastWorker+1].active {
 				lastWorker++
 				goto Top
