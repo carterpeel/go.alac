@@ -71,6 +71,7 @@ type Alac struct {
 	setinfo_8a_rate               uint32 /* 0x0000ac44 */
 	/* end setinfo stuff */
 
+	queue *AudioQueue
 }
 
 /*
@@ -663,7 +664,7 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 
 			if uncompressed_bytes != 0 {
 				for i := uint32(0); i < outputsamples; i++ {
-					alac.uncompressed_bytes_buffer_a[i] = int32(alac.readbits(uncompressed_bytes * 8))
+					alac.uncompressed_bytes_buffer_a[i] = int32(alac.readbits(uncompressed_bytes << 3))
 				}
 			}
 
@@ -696,7 +697,6 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 				// predictor_decompress_fir_adapt(predictor_error, outputsamples ...)
 				// little strange..
 			}
-
 		} else {
 			// not compressed, easy case
 			if alac.setinfo_sample_size <= 16 {
@@ -705,15 +705,13 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 					audiobits = sign_extended32(audiobits, int(alac.setinfo_sample_size))
 
 					alac.outputsamples_buffer_a[i] = audiobits
-					fmt.Printf("%d-", audiobits)
 				}
-				fmt.Printf("\n")
 			} else {
 				for i := uint32(0); i < outputsamples; i++ {
 					audiobits := int32(alac.readbits(16))
 					// special case of sign extension...
 					// as we'll be ORing the low 16bits into this
-					audiobits = audiobits << (alac.setinfo_sample_size - 16)
+					audiobits <<= alac.setinfo_sample_size - 16
 					audiobits |= int32(alac.readbits(int(alac.setinfo_sample_size - 16)))
 					audiobits = signExtend24(audiobits)
 
@@ -741,7 +739,7 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 			for i := uint32(0); i < outputsamples; i++ {
 				sample := alac.outputsamples_buffer_a[i]
 				if uncompressed_bytes != 0 {
-					sample = sample << uint(uncompressed_bytes*8)
+					sample <<= uint(uncompressed_bytes * 8)
 					mask := uint32(^(0xFFFFFFFF << uint(uncompressed_bytes*8)))
 					sample |= alac.uncompressed_bytes_buffer_a[i] & int32(mask)
 				}
