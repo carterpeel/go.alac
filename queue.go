@@ -4,6 +4,7 @@ import (
 	"github.com/carterpeel/bobcaygeon/rtsp"
 	kyoo "github.com/dirkaholic/kyoo"
 	"github.com/dirkaholic/kyoo/job"
+	"github.com/sirupsen/logrus"
 )
 
 type AudioQueue struct {
@@ -23,7 +24,9 @@ func NewAudioQueue(maxDecoders int, callback func(data []byte)) (aq *AudioQueue)
 
 	go func() {
 		for d := range aq.finishedChan {
+			logrus.Infoln("Executing callback")
 			aq.callback(d)
+			logrus.Infoln("Callback complete")
 		}
 	}()
 
@@ -36,9 +39,11 @@ func (aq *AudioQueue) ProcessSession(session *rtsp.Session) {
 			Func: func() error {
 				decoder, _ := New()
 				aq.finishedChan <- decoder.decodeFrame(d)
+				logrus.Infoln("Job finished")
 				return nil
 			},
 		})
+		logrus.Infoln("Submitted job to queue")
 	}
 }
 
