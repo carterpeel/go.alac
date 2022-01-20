@@ -290,18 +290,16 @@ func (alac *Alac) entropyDecodeValue(
 	if x > rice_threshold {
 		// read the number from the bit stream (raw value)
 		x = int32(alac.readbits(readSampleSize)) & int32(uint32(0xffffffff)>>uint(32-readSampleSize))
-	} else {
-		if k != 1 {
-			extraBits := int(alac.readbits(k))
+	} else if k != 1 {
+		extraBits := int(alac.readbits(k))
 
-			// x = x * (2^k - 1)
-			x *= int32(((1 << uint(k)) - 1) & rice_kmodifier_mask)
+		// x = x * (2^k - 1)
+		x *= int32(((1 << uint(k)) - 1) & rice_kmodifier_mask)
 
-			if extraBits > 1 {
-				x += int32(extraBits - 1)
-			} else {
-				alac.unreadbits(1)
-			}
+		if extraBits > 1 {
+			x += int32(extraBits - 1)
+		} else {
+			alac.unreadbits(1)
 		}
 	}
 
@@ -699,21 +697,11 @@ func (alac *Alac) decodeFrame(inbuffer []byte) []byte {
 			// not compressed, easy case
 			if alac.setinfo_sample_size <= 16 {
 				for i := uint32(0); i < outputsamples; i++ {
-					audiobits := int32(alac.readbits(int(alac.setinfo_sample_size)))
-					audiobits = sign_extended32(audiobits, int(alac.setinfo_sample_size))
-
-					alac.outputsamples_buffer_a[i] = audiobits
+					alac.outputsamples_buffer_a[i] = sign_extended32(int32(alac.readbits(int(alac.setinfo_sample_size))), int(alac.setinfo_sample_size))
 				}
 			} else {
 				for i := uint32(0); i < outputsamples; i++ {
-					audiobits := int32(alac.readbits(16))
-					// special case of sign extension...
-					// as we'll be ORing the low 16bits into this
-					audiobits <<= alac.setinfo_sample_size - 16
-					audiobits |= int32(alac.readbits(int(alac.setinfo_sample_size - 16)))
-					audiobits = signExtend24(audiobits)
-
-					alac.outputsamples_buffer_a[i] = audiobits
+					alac.outputsamples_buffer_a[i] = signExtend24((int32(alac.readbits(16)))<<alac.setinfo_sample_size-16) | int32(alac.readbits(int(alac.setinfo_sample_size-16)))
 				}
 			}
 			uncompressed_bytes = 0 // always 0 for uncompressed
